@@ -22,17 +22,12 @@ export PATH=/usr/bin:$PATH
 readonly ROLE="$(/usr/share/google/get_metadata_value attributes/dataproc-role)"
 readonly PRESTO_MASTER_FQDN="$(/usr/share/google/get_metadata_value attributes/dataproc-master)"
 readonly WORKER_COUNT=$(/usr/share/google/get_metadata_value attributes/dataproc-worker-count)
-if [[ -d /usr/local/share/google/dataproc/lib ]]; then
-  readonly CONNECTOR_JAR="$(find /usr/local/share/google/dataproc/lib -name 'gcs-connector-*.jar')"
-else
-  readonly CONNECTOR_JAR="$(find /usr/lib/hadoop/lib -name 'gcs-connector-*.jar')"
-fi
-readonly PRESTO_VERSION='0.206'
+readonly PRESTO_MAJOR_VERSION='302'
+readonly STARBURST_PRESTO_VERSION='302-e.11'
 readonly HTTP_PORT='8080'
 readonly INIT_SCRIPT='/usr/lib/systemd/system/presto.service'
 PRESTO_JVM_MB=0;
 PRESTO_QUERY_NODE_MB=0;
-PRESTO_RESERVED_SYSTEM_MB=0;
 # Allocate some headroom for untracked memory usage (in the heap and to help GC).
 PRESTO_HEADROOM_NODE_MB=256;
 
@@ -55,8 +50,8 @@ function wait_for_presto_cluster_ready() {
 
 function get_presto(){
   # Download and unpack Presto server
-  wget https://repo1.maven.org/maven2/com/facebook/presto/presto-server/${PRESTO_VERSION}/presto-server-${PRESTO_VERSION}.tar.gz
-  tar -zxvf presto-server-${PRESTO_VERSION}.tar.gz
+  wget https://storage.googleapis.com/starburstdata/presto/${PRESTO_MAJOR_VERSION}e/${STARBURST_PRESTO_VERSION}/presto-server-${STARBURST_PRESTO_VERSION}.tar.gz
+  tar -zxvf presto-server-${STARBURST_PRESTO_VERSION}.tar.gz
   mkdir -p /var/presto/data
 }
 
@@ -106,13 +101,12 @@ function calculate_memory(){
   # to leave betweenused bytes and Xmx bytes. Rounding down by integer division
   # here also effectively places round-down bytes in the "general" pool.
   PRESTO_QUERY_NODE_MB=$(( ${PRESTO_JVM_MB} * 6 / 10 - ${spark_executor_overhead_mb} ))
-  PRESTO_RESERVED_SYSTEM_MB=$(( ${PRESTO_JVM_MB} * 4 / 10 - ${spark_executor_overhead_mb} ))
   readonly PRESTO_QUERY_NODE_MB
   readonly PRESTO_RESERVED_SYSTEM_MB
 }
 
 function configure_node_properties(){
-  cat > presto-server-${PRESTO_VERSION}/etc/node.properties <<EOF
+  cat > presto-server-${STARBURST_PRESTO_VERSION}/etc/node.properties <<EOF
 node.environment=production
 node.id=$(uuidgen)
 node.data-dir=/var/presto/data
@@ -125,14 +119,14 @@ function configure_hive(){
     --configuration_file /etc/hive/conf/hive-site.xml \
     --name hive.metastore.uris 2>/dev/null)
 
-  cat > presto-server-${PRESTO_VERSION}/etc/catalog/hive.properties <<EOF
+  cat > presto-server-${STARBURST_PRESTO_VERSION}/etc/catalog/hive.properties <<EOF
 connector.name=hive-hadoop2
 hive.metastore.uri=${metastore_uri}
 EOF
 }
 
 function configure_jvm(){
-  cat > presto-server-${PRESTO_VERSION}/etc/jvm.config <<EOF
+  cat > presto-server-${STARBURST_PRESTO_VERSION}/etc/jvm.config <<EOF
 -server
 -Xmx${PRESTO_JVM_MB}m
 -Xmn512m
@@ -157,7 +151,7 @@ function configure_master(){
   else
     include_coordinator='false'
   fi
-  cat > presto-server-${PRESTO_VERSION}/etc/config.properties <<EOF
+  cat > presto-server-${STARBURST_PRESTO_VERSION}/etc/config.properties <<EOF
 coordinator=true
 node-scheduler.include-coordinator=${include_coordinator}
 http-server.http.port=${HTTP_PORT}
@@ -165,25 +159,22 @@ query.max-memory=999TB
 query.max-memory-per-node=${PRESTO_QUERY_NODE_MB}MB
 query.max-total-memory-per-node=${PRESTO_QUERY_NODE_MB}MB
 memory.heap-headroom-per-node=${PRESTO_HEADROOM_NODE_MB}MB
-resources.reserved-system-memory=${PRESTO_RESERVED_SYSTEM_MB}MB
 discovery-server.enabled=true
 discovery.uri=http://${PRESTO_MASTER_FQDN}:${HTTP_PORT}
 EOF
-
   # Install cli
-  $(wget https://repo1.maven.org/maven2/com/facebook/presto/presto-cli/${PRESTO_VERSION}/presto-cli-${PRESTO_VERSION}-executable.jar -O /usr/bin/presto)
+  $(wget https://storage.googleapis.com/starburstdata/presto/${PRESTO_MAJOR_VERSION}e/${STARBURST_PRESTO_VERSION}/presto-cli-${STARBURST_PRESTO_VERSION}-executable.jar -O /usr/bin/presto)
   $(chmod a+x /usr/bin/presto)
 }
 
 function configure_worker(){
-  cat > presto-server-${PRESTO_VERSION}/etc/config.properties <<EOF
+  cat > presto-server-${STARBURST_PRESTO_VERSION}/etc/config.properties <<EOF
 coordinator=false
 http-server.http.port=${HTTP_PORT}
 query.max-memory=999TB
 query.max-memory-per-node=${PRESTO_QUERY_NODE_MB}MB
 query.max-total-memory-per-node=${PRESTO_QUERY_NODE_MB}MB
 memory.heap-headroom-per-node=${PRESTO_HEADROOM_NODE_MB}MB
-resources.reserved-system-memory=${PRESTO_RESERVED_SYSTEM_MB}MB
 discovery.uri=http://${PRESTO_MASTER_FQDN}:${HTTP_PORT}
 EOF
 }
@@ -197,8 +188,8 @@ Description=Presto DB
 
 [Service]
 Type=forking
-ExecStart=/presto-server-${PRESTO_VERSION}/bin/launcher.py start
-ExecStop=/presto-server-${PRESTO_VERSION}/bin/launcher.py stop
+ExecStart=/presto-server-${STARBURST_PRESTO_VERSION}/bin/launcher.py start
+ExecStop=/presto-server-${STARBURST_PRESTO_VERSION}/bin/launcher.py stop
 Restart=always
 
 
@@ -215,11 +206,9 @@ EOF
 }
 
 function configure_and_start_presto(){
-  # Copy required Jars
-  cp ${CONNECTOR_JAR} presto-server-${PRESTO_VERSION}/plugin/hive-hadoop2
 
   # Configure Presto
-  mkdir -p presto-server-${PRESTO_VERSION}/etc/catalog
+  mkdir -p presto-server-${STARBURST_PRESTO_VERSION}/etc/catalog
 
   configure_node_properties
   configure_hive
