@@ -70,9 +70,9 @@ function wait_for_presto_cluster_ready() {
 # Download and unpack Presto Server
 function get_presto() {
   wget -nv --timeout=30 --tries=5 --retry-connrefused -O - \
-    "${PRESTO_BASE_URL}/${PRESTO_MAJOR_VERSION}e/${STARBURST_PRESTO_VERSION}/presto-server-${STARBURST_PRESTO_VERSION}.tar.gz" |
+    "${PRESTO_BASE_URL}/${PRESTO_MAJOR_VERSION}e/${PRESTO_VERSION}/presto-server-${PRESTO_VERSION}.tar.gz" |
     tar -xzf - -C /opt
-  ln -s "/opt/presto-server-${STARBURST_PRESTO_VERSION}" "/opt/presto-server"
+  ln -s "/opt/presto-server-${PRESTO_VERSION}" "/opt/presto-server"
   mkdir -p /var/presto/data
 }
 
@@ -205,7 +205,7 @@ EOF
 
   # Install CLI
   wget -nv --timeout=30 --tries=5 --retry-connrefused \
-    "https://s3.us-east-2.amazonaws.com/starburstdata/presto/starburst/${PRESTO_MAJOR_VERSION}e/${STARBURST_PRESTO_VERSION}/presto-cli-${STARBURST_PRESTO_VERSION}-executable.jar" -O /usr/bin/presto
+    "${PRESTO_BASE_URL}/${PRESTO_MAJOR_VERSION}e/${PRESTO_VERSION}/presto-cli-${PRESTO_VERSION}-executable.jar" -O /usr/bin/presto
   chmod a+x /usr/bin/presto
 }
 
@@ -226,13 +226,11 @@ function start_presto() {
   cat <<EOF >${INIT_SCRIPT}
 [Unit]
 Description=Presto SQL
-
 [Service]
 Type=forking
 ExecStart=/opt/presto-server/bin/launcher.py start
 ExecStop=/opt/presto-server/bin/launcher.py stop
 Restart=always
-
 [Install]
 WantedBy=multi-user.target
 EOF
